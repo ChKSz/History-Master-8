@@ -1,0 +1,411 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { Lesson, GradingResult } from '../types';
+import { gradeAnswer } from '../geminiService';
+import { CheckCircle2, XCircle, Loader2, Sparkles, ChevronRight, Clock, Target, Trophy, RotateCcw, ListChecks, ArrowLeft } from 'lucide-react';
+
+interface Props {
+  lesson: Lesson;
+}
+
+type Mode = 'select' | 'practice-list' | 'practice' | 'exam' | 'exam-result';
+
+interface ExamQuestionResult {
+  questionId: number;
+  questionText: string;
+  userAnswer: string;
+  correctAnswer: string;
+  grading: GradingResult;
+}
+
+const QuizMode: React.FC<Props> = ({ lesson }) => {
+  const [mode, setMode] = useState<Mode>('select');
+  const [currentIndex, setCurrentIndex] = useState(0);
+  
+  // Single/Multi input handling
+  const [userAnswers, setUserAnswers] = useState<string[]>(['']);
+  
+  const [grading, setGrading] = useState(false);
+  const [practiceResult, setPracticeResult] = useState<GradingResult | null>(null);
+  
+  // Exam specific state
+  const [examResults, setExamResults] = useState<ExamQuestionResult[]>([]);
+  const [timeLeft, setTimeLeft] = useState(0);
+  const timerRef = useRef<number | null>(null);
+
+  // Reset when lesson changes
+  useEffect(() => {
+    setMode('select');
+    resetQuizState();
+  }, [lesson.id]);
+
+  useEffect(() => {
+    if (mode === 'exam' && timeLeft > 0) {
+      timerRef.current = window.setInterval(() => {
+        setTimeLeft((prev) => {
+          if (prev <= 1) {
+            if (timerRef.current !== null) clearInterval(timerRef.current);
+            finishExam();
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    }
+    return () => {
+      if (timerRef.current !== null) clearInterval(timerRef.current);
+    };
+  }, [mode, timeLeft]);
+
+  // Determine answer structure (how many inputs needed)
+  useEffect(() => {
+    if (mode === 'practice' || mode === 'exam') {
+      const currentQ = lesson.qa[currentIndex];
+      // Count circle numbers to determine split
+      const parts = currentQ.answer.split(/(?=[①②③④⑤⑥⑦⑧⑨⑩])/g);
+      // Initialize inputs based on parts count. If 1 part, 1 input. If 3 parts, 3 inputs.
+      setUserAnswers(new Array(parts.length).fill(''));
+      setPracticeResult(null);
+    }
+  }, [currentIndex, mode, lesson.qa]);
+
+  const resetQuizState = () => {
+    setCurrentIndex(0);
+    setUserAnswers(['']);
+    setPracticeResult(null);
+    setExamResults([]);
+  };
+
+  const openPracticeList = () => {
+    setMode('practice-list');
+  };
+
+  const startPracticeAt = (index: number) => {
+    setCurrentIndex(index);
+    setMode('practice');
+  };
+
+  const startExam = () => {
+    setMode('exam');
+    resetQuizState();
+    setTimeLeft(lesson.qa.length * 2 * 60); 
+  };
+
+  const finishExam = () => {
+    setMode('exam-result');
+    if (timerRef.current !== null) clearInterval(timerRef.current);
+  };
+
+  const currentQA = lesson.qa[currentIndex];
+  // Helper to check if current question expects multiple points
+  const expectedParts = currentQA.answer.split(/(?=[①②③④⑤⑥⑦⑧⑨⑩])/g);
+  const isMultiPart = expectedParts.length > 1;
+
+  const handleInputChange = (index: number, val: string) => {
+    const newAnswers = [...userAnswers];
+    newAnswers[index] = val;
+    setUserAnswers(newAnswers);
+  };
+
+  const handleGrade = async () => {
+    // Combine answers for grading
+    const combinedAnswer = userAnswers.map((ans, i) => isMultiPart ? `${i+1}. ${ans}` : ans).join('\n');
+    
+    if (!combinedAnswer.trim() || userAnswers.every(a => !a.trim())) return;
+    
+    setGrading(true);
+    const res = await gradeAnswer(currentQA.question, combinedAnswer, currentQA.answer);
+    
+    if (mode === 'practice') {
+      setPracticeResult(res);
+    } else if (mode === 'exam') {
+      // Store full result including feedback
+      setExamResults(prev => [...prev, { 
+        questionId: currentQA.id, 
+        questionText: currentQA.question,
+        userAnswer: combinedAnswer,
+        correctAnswer: currentQA.answer,
+        grading: res
+      }]);
+      
+      if (currentIndex < lesson.qa.length - 1) {
+        // Move to next question logic handled by useEffect initialization
+        setCurrentIndex(prev => prev + 1);
+      } else {
+        finishExam();
+      }
+    }
+    setGrading(false);
+  };
+
+  const handleNextPractice = () => {
+    // In practice mode, we might want to go back to list OR next question.
+    // User requirement: "Special training practices one question at a time".
+    // I will add a "Back to List" button and a "Next" button in the result view.
+    setCurrentIndex((prev) => (prev + 1) % lesson.qa.length);
+  };
+
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  // --- SELECTION SCREEN ---
+  if (mode === 'select') {
+    return (
+      <div className="flex flex-col gap-6 items-center justify-center h-full min-h-[400px] animate-fade-in">
+        <h2 className="text-2xl font-bold text-gray-800 dark:text-white">选择答题模式</h2>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full max-w-2xl">
+          <button 
+            onClick={startExam}
+            className="group flex flex-col items-center p-8 rounded-[2.5rem] bg-surfaceContainer dark:bg-surfaceContainer-dark border border-outline/10 hover:border-primary/50 hover:shadow-lg transition-all duration-300"
+          >
+            <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center text-primary mb-4 group-hover:scale-110 transition-transform">
+              <Clock size={32} />
+            </div>
+            <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100 mb-2">模拟考试</h3>
+            <p className="text-sm text-outline text-center">
+              全真模拟，限时答题<br/>
+              考试结束后显示详细AI复盘
+            </p>
+          </button>
+
+          <button 
+            onClick={openPracticeList}
+            className="group flex flex-col items-center p-8 rounded-[2.5rem] bg-surfaceContainer dark:bg-surfaceContainer-dark border border-outline/10 hover:border-primary/50 hover:shadow-lg transition-all duration-300"
+          >
+            <div className="w-16 h-16 rounded-full bg-green-500/10 flex items-center justify-center text-green-600 mb-4 group-hover:scale-110 transition-transform">
+              <Target size={32} />
+            </div>
+            <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100 mb-2">专项训练</h3>
+            <p className="text-sm text-outline text-center">
+              选择题目，逐个击破<br/>
+              纲哥详细解析每一题
+            </p>
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // --- PRACTICE LIST SELECTION ---
+  if (mode === 'practice-list') {
+    return (
+      <div className="animate-slide-up pb-24">
+         <div className="flex items-center gap-4 mb-6">
+            <button onClick={() => setMode('select')} className="text-outline hover:text-primary font-bold flex items-center gap-1">
+              <ChevronRight className="rotate-180 inline" size={20}/> 返回
+            </button>
+            <h2 className="text-xl font-bold text-gray-900 dark:text-white">专项训练 - 选择题目</h2>
+         </div>
+         <div className="grid gap-3">
+           {lesson.qa.map((item, idx) => (
+             <button
+               key={item.id}
+               onClick={() => startPracticeAt(idx)}
+               className="w-full text-left p-6 rounded-[2rem] bg-surfaceContainer dark:bg-surfaceContainer-dark hover:bg-white dark:hover:bg-gray-800 border border-outline/10 hover:border-primary/30 transition-all duration-200 flex items-start gap-4"
+             >
+               <span className="flex-shrink-0 w-8 h-8 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold text-sm mt-0.5">
+                 {idx + 1}
+               </span>
+               <span className="text-gray-800 dark:text-gray-100 font-medium leading-relaxed">
+                 {item.question}
+               </span>
+             </button>
+           ))}
+         </div>
+      </div>
+    );
+  }
+
+  // --- EXAM RESULT SCREEN (DETAILED) ---
+  if (mode === 'exam-result') {
+    const totalScore = examResults.reduce((acc, curr) => acc + curr.grading.score, 0);
+    const avgScore = Math.round(totalScore / lesson.qa.length);
+    const correctCount = examResults.filter(r => r.grading.isCorrect).length;
+
+    return (
+      <div className="pb-24 animate-fade-in space-y-8">
+        <div className="text-center">
+           <div className="inline-flex items-center justify-center w-20 h-20 rounded-full bg-yellow-500/10 text-yellow-600 mb-4">
+            <Trophy size={40} />
+          </div>
+          <h2 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">考试复盘</h2>
+          <div className="flex justify-center gap-8 mt-4">
+             <div>
+               <p className="text-xs text-outline uppercase font-bold">平均分</p>
+               <p className="text-2xl font-bold text-primary dark:text-primary-dark">{avgScore}</p>
+             </div>
+             <div>
+               <p className="text-xs text-outline uppercase font-bold">正确率</p>
+               <p className="text-2xl font-bold text-green-600">{Math.round((correctCount / lesson.qa.length) * 100)}%</p>
+             </div>
+          </div>
+        </div>
+
+        <div className="space-y-6">
+          {examResults.map((res, idx) => (
+            <div key={idx} className="p-6 rounded-[2.5rem] bg-surfaceContainer dark:bg-surfaceContainer-dark border border-outline/10">
+               <div className="flex items-start justify-between gap-4 mb-4">
+                  <h3 className="text-lg font-bold text-gray-800 dark:text-white flex-1">
+                    <span className="text-primary mr-2">{idx + 1}.</span> {res.questionText}
+                  </h3>
+                  <div className={`px-3 py-1 rounded-full text-sm font-bold whitespace-nowrap ${res.grading.isCorrect ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                    {res.grading.score} 分
+                  </div>
+               </div>
+               
+               <div className="space-y-4">
+                 <div className="p-4 rounded-[1.5rem] bg-white dark:bg-gray-800/50 text-sm">
+                   <span className="block text-xs font-bold text-outline mb-1">你的回答</span>
+                   <p className="text-gray-700 dark:text-gray-300">{res.userAnswer}</p>
+                 </div>
+                 
+                 <div className="p-4 rounded-[1.5rem] bg-primary/5 dark:bg-primary/10 border border-primary/10">
+                    <span className="block text-xs font-bold text-primary mb-1">纲哥点评</span>
+                    <p className="text-gray-800 dark:text-gray-200 text-sm leading-relaxed">{res.grading.feedback}</p>
+                 </div>
+
+                 {/* Show reference answer expanded */}
+                 <div className="px-2">
+                    <span className="block text-xs font-bold text-outline mb-2">标准答案</span>
+                    <div className="text-gray-600 dark:text-gray-400 text-sm">
+                      {res.correctAnswer.split(/(?=[①②③④⑤⑥⑦⑧⑨⑩])/g).map((part, pIdx) => (
+                        <div key={pIdx}>{part.trim()}</div>
+                      ))}
+                    </div>
+                 </div>
+               </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="flex justify-center">
+          <button 
+            onClick={() => { setMode('select'); resetQuizState(); }}
+            className="px-8 py-4 rounded-full bg-primary dark:bg-primary-dark text-onPrimary font-bold flex items-center justify-center gap-2 hover:opacity-90 transition-opacity shadow-lg"
+          >
+            <RotateCcw size={20} />
+            重新开始
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // --- QUESTION CARD (PRACTICE & EXAM) ---
+  return (
+    <div className="max-w-2xl mx-auto pb-24 animate-slide-up">
+      {/* Progress & Info */}
+      <div className="mb-8 flex items-center justify-between px-2">
+        <div className="flex items-center gap-4">
+          <button onClick={() => setMode('select')} className="text-outline hover:text-primary text-sm font-bold">退出</button>
+          <button 
+            onClick={openPracticeList} 
+            className={`text-outline hover:text-primary text-sm font-bold flex items-center gap-1 ${mode === 'exam' ? 'hidden' : ''}`}
+          >
+             <ListChecks size={16}/> 列表
+          </button>
+          <span className="text-sm font-medium text-outline transition-colors duration-300">
+            {mode === 'exam' ? '考试中' : '专项训练'} • {currentIndex + 1} / {lesson.qa.length}
+          </span>
+        </div>
+        {mode === 'exam' && (
+          <div className="px-4 py-1.5 rounded-full bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 font-mono font-bold flex items-center gap-2">
+            <Clock size={16} />
+            {formatTime(timeLeft)}
+          </div>
+        )}
+      </div>
+
+      <div className="h-2 w-full bg-surfaceContainer dark:bg-gray-700 rounded-full overflow-hidden mb-6 transition-colors duration-300">
+        <div 
+          className="h-full bg-primary dark:bg-primary-dark transition-all duration-500 ease-out"
+          style={{ width: `${((currentIndex + 1) / lesson.qa.length) * 100}%` }}
+        />
+      </div>
+
+      {/* Card */}
+      <div className="bg-surface dark:bg-surfaceContainer-dark rounded-[2.5rem] p-8 shadow-sm border border-outline/10 relative overflow-hidden transition-colors duration-300">
+        
+        <h3 className="text-xl md:text-2xl font-bold text-gray-800 dark:text-white mb-8 leading-relaxed relative z-10 transition-colors duration-300">
+          {currentQA.question}
+        </h3>
+
+        <div className="space-y-4 relative z-10">
+          {/* Dynamic Inputs */}
+          {userAnswers.map((ans, idx) => (
+            <div key={idx} className="relative">
+              {isMultiPart && (
+                 <div className="absolute left-4 top-4 text-primary font-bold">{idx + 1}.</div>
+              )}
+              <textarea
+                value={ans}
+                onChange={(e) => handleInputChange(idx, e.target.value)}
+                disabled={(mode === 'practice' && !!practiceResult) || grading}
+                placeholder={isMultiPart ? `输入第 ${idx+1} 点内容...` : "在此输入你的回答..."}
+                className={`w-full ${isMultiPart ? 'pl-10 p-4 h-24' : 'p-6 h-40'} rounded-[2rem] bg-surfaceContainer dark:bg-gray-800 border-2 border-transparent focus:border-primary/50 focus:bg-white dark:focus:bg-gray-900 outline-none transition-all duration-300 resize-none text-gray-800 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-500 text-lg`}
+              />
+            </div>
+          ))}
+
+          {!practiceResult ? (
+            <button
+              onClick={handleGrade}
+              disabled={grading || userAnswers.every(a => !a.trim())}
+              className="w-full py-4 rounded-full bg-primary dark:bg-primary-dark text-onPrimary dark:text-onPrimary-dark font-semibold text-lg hover:shadow-lg active:scale-[0.98] transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 mt-4"
+            >
+              {grading ? <Loader2 className="animate-spin" /> : <Sparkles size={20} />}
+              {grading ? '纲哥批改中...' : (mode === 'exam' ? (currentIndex === lesson.qa.length - 1 ? '交卷' : '下一题') : '提交')}
+            </button>
+          ) : (
+            // Only shown in Practice Mode
+            <div className="space-y-6 animate-fade-in mt-6">
+              <div className={`p-6 rounded-[2rem] border transition-colors duration-300 ${practiceResult.isCorrect ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800' : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'}`}>
+                <div className="flex items-center gap-3 mb-3">
+                  {practiceResult.isCorrect ? (
+                    <CheckCircle2 className="text-green-600 dark:text-green-400" />
+                  ) : (
+                    <XCircle className="text-red-600 dark:text-red-400" />
+                  )}
+                  <span className={`font-bold text-xl transition-colors duration-300 ${practiceResult.isCorrect ? 'text-green-700 dark:text-green-300' : 'text-red-700 dark:text-red-300'}`}>
+                    得分: {practiceResult.score}
+                  </span>
+                </div>
+                <p className="text-gray-700 dark:text-gray-300 text-base leading-relaxed transition-colors duration-300">
+                  {practiceResult.feedback}
+                </p>
+              </div>
+
+              <div className="p-6 rounded-[2rem] bg-surfaceContainer/50 dark:bg-gray-800/50 border border-outline/10 transition-colors duration-300">
+                <p className="text-xs font-bold text-outline uppercase tracking-wider mb-3 transition-colors duration-300">标准答案</p>
+                <div className="text-gray-800 dark:text-gray-200 leading-relaxed transition-colors duration-300">
+                   {currentQA.answer.split(/(?=[①②③④⑤⑥⑦⑧⑨⑩])/g).map((part, pIdx) => (
+                      <div key={pIdx} className={pIdx > 0 ? "mt-1" : ""}>{part.trim()}</div>
+                   ))}
+                </div>
+              </div>
+
+              <div className="flex gap-3">
+                 <button
+                  onClick={openPracticeList}
+                  className="flex-1 py-4 rounded-full bg-surfaceContainer dark:bg-gray-800 text-outline font-bold hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+                >
+                  返回列表
+                </button>
+                <button
+                  onClick={handleNextPractice}
+                  className="flex-1 py-4 rounded-full bg-primary dark:bg-primary-dark text-onPrimary font-bold hover:opacity-90 transition-opacity flex items-center justify-center gap-2"
+                >
+                  下一题 <ChevronRight size={20} />
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default QuizMode;
