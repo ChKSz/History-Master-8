@@ -1,8 +1,33 @@
 import { GoogleGenAI } from "@google/genai";
 import { GradingResult, ChatMessage } from "./types";
 
-// The API key must be obtained exclusively from the environment variable process.env.API_KEY
-const RAW_ENV_KEYS = process.env.API_KEY || '';
+// 安全获取环境变量的辅助函数
+// 解决 Vite 构建后在浏览器运行 "process is not defined" 导致白屏的问题
+const getEnvKey = () => {
+  let key = '';
+  
+  // 1. 优先尝试 Vite 注入的环境变量 (Cloudflare 设置 VITE_API_KEY)
+  try {
+    // @ts-ignore
+    if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_KEY) {
+      // @ts-ignore
+      key = import.meta.env.VITE_API_KEY;
+    }
+  } catch (e) {}
+
+  // 2. 其次尝试 process.env (兼容性处理)
+  if (!key) {
+    try {
+      if (typeof process !== 'undefined' && process.env && process.env.API_KEY) {
+        key = process.env.API_KEY;
+      }
+    } catch (e) {}
+  }
+  
+  return key || '';
+};
+
+const RAW_ENV_KEYS = getEnvKey();
 
 // 解析环境变量中的多个 Key (支持逗号分隔)
 const API_KEYS = RAW_ENV_KEYS.split(',').map((k: string) => k.trim()).filter((k: string) => k);
@@ -40,9 +65,8 @@ const SYSTEM_PROMPT = `
 // 获取 AI 客户端实例（实现负载均衡）
 const getAIClient = () => {
   if (API_KEYS.length === 0) {
-    console.error("No API Keys provided! Please set API_KEY.");
-    // 生产环境如果没有key可能会报错，这里做个防御
-    throw new Error("Missing API Keys");
+    console.error("No API Keys provided! Please set VITE_API_KEY in Cloudflare Pages settings.");
+    // 此时不抛出错误，而是让前端有机会显示更友好的 UI，或者在调用时处理
   }
   // 随机选择一个 Key
   const randomKey = API_KEYS[Math.floor(Math.random() * API_KEYS.length)];
@@ -54,6 +78,10 @@ const getAIClient = () => {
 };
 
 export const gradeAnswer = async (question: string, userAnswer: string, correctAnswer: string): Promise<GradingResult> => {
+  if (API_KEYS.length === 0) {
+    return { score: 0, feedback: "系统提示：API Key 未配置。请联系纲哥（网站管理员）在 Cloudflare 后台添加 VITE_API_KEY 环境变量。", isCorrect: false };
+  }
+
   if (!userAnswer.trim()) {
     return { score: 0, feedback: "咋啦？是不是忘了？没事，随便写点印象中的，我来帮你顺一顺思路！😄", isCorrect: false };
   }
@@ -99,6 +127,10 @@ export const gradeAnswer = async (question: string, userAnswer: string, correctA
 };
 
 export const askHistoryQuestion = async (context: string, history: ChatMessage[], newMessage: string): Promise<string> => {
+  if (API_KEYS.length === 0) {
+    return "系统提示：API Key 未配置。请联系管理员在后台设置环境变量 VITE_API_KEY。";
+  }
+
   // Convert chat history to a readable script format for the AI
   const historyText = history.slice(-10).map(msg => 
     `${msg.role === 'user' ? '同学' : '纲哥'}: ${msg.text}`
