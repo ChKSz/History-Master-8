@@ -1,21 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Lesson, GradingResult } from '../types';
+import { Lesson, GradingResult, ExamRecord, ExamQuestionResult } from '../types';
 import { gradeAnswer } from '../geminiService';
-import { CheckCircle2, XCircle, Loader2, Sparkles, ChevronRight, Clock, Target, Trophy, RotateCcw, ListChecks, ArrowLeft } from 'lucide-react';
+import { CheckCircle2, XCircle, Loader2, Sparkles, ChevronRight, Clock, Target, Trophy, RotateCcw, ListChecks, ArrowLeft, History, Calendar } from 'lucide-react';
 
 interface Props {
   lesson: Lesson;
 }
 
-type Mode = 'select' | 'practice-list' | 'practice' | 'exam' | 'exam-result';
-
-interface ExamQuestionResult {
-  questionId: number;
-  questionText: string;
-  userAnswer: string;
-  correctAnswer: string;
-  grading: GradingResult;
-}
+type Mode = 'select' | 'practice-list' | 'practice' | 'exam' | 'exam-result' | 'history' | 'history-detail';
 
 const QuizMode: React.FC<Props> = ({ lesson }) => {
   const [mode, setMode] = useState<Mode>('select');
@@ -31,6 +23,39 @@ const QuizMode: React.FC<Props> = ({ lesson }) => {
   const [examResults, setExamResults] = useState<ExamQuestionResult[]>([]);
   const [timeLeft, setTimeLeft] = useState(0);
   const timerRef = useRef<number | null>(null);
+
+  // History state
+  const [examHistory, setExamHistory] = useState<ExamRecord[]>([]);
+  const [selectedRecord, setSelectedRecord] = useState<ExamRecord | null>(null);
+
+  // Load history on mount
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem('hm8_exam_history');
+      if (stored) {
+        setExamHistory(JSON.parse(stored));
+      }
+    } catch (e) {
+      console.error("Failed to load history", e);
+    }
+  }, []);
+
+  // Save history helper
+  const saveExamToHistory = (results: ExamQuestionResult[]) => {
+    const totalScore = results.reduce((acc, curr) => acc + curr.grading.score, 0);
+    const newRecord: ExamRecord = {
+      id: Date.now().toString(),
+      timestamp: Date.now(),
+      lessonTitle: lesson.title,
+      totalScore,
+      totalQuestions: lesson.qa.length,
+      results
+    };
+
+    const updatedHistory = [newRecord, ...examHistory];
+    setExamHistory(updatedHistory);
+    localStorage.setItem('hm8_exam_history', JSON.stringify(updatedHistory));
+  };
 
   // Reset when lesson changes
   useEffect(() => {
@@ -93,6 +118,11 @@ const QuizMode: React.FC<Props> = ({ lesson }) => {
   const finishExam = () => {
     setMode('exam-result');
     if (timerRef.current !== null) clearInterval(timerRef.current);
+    
+    // Save to local storage
+    if (examResults.length > 0) {
+       saveExamToHistory(examResults);
+    }
   };
 
   const currentQA = lesson.qa[currentIndex];
@@ -119,28 +149,39 @@ const QuizMode: React.FC<Props> = ({ lesson }) => {
       setPracticeResult(res);
     } else if (mode === 'exam') {
       // Store full result including feedback
-      setExamResults(prev => [...prev, { 
+      // Note: We need to use functional state update to ensure we have the latest results when finishing
+      const newResult = { 
         questionId: currentQA.id, 
         questionText: currentQA.question,
         userAnswer: combinedAnswer,
         correctAnswer: currentQA.answer,
         grading: res
-      }]);
+      };
+      
+      setExamResults(prev => {
+        const updated = [...prev, newResult];
+        // Check if this was the last question
+        if (currentIndex >= lesson.qa.length - 1) {
+           // We are done. The useEffect dependency on examResults isn't ideal for synchronous save
+           // So we save in finishExam, but finishExam needs access to 'updated'.
+           // To keep it simple, finishExam calls logic that relies on state, which might be stale in this closure.
+           // However, since we update state here, we can trigger finish logic after render or pass data.
+           // Let's manually trigger save if it's the last one.
+           saveExamToHistory(updated);
+           setMode('exam-result');
+           if (timerRef.current !== null) clearInterval(timerRef.current);
+        }
+        return updated;
+      });
       
       if (currentIndex < lesson.qa.length - 1) {
-        // Move to next question logic handled by useEffect initialization
         setCurrentIndex(prev => prev + 1);
-      } else {
-        finishExam();
       }
     }
     setGrading(false);
   };
 
   const handleNextPractice = () => {
-    // In practice mode, we might want to go back to list OR next question.
-    // User requirement: "Special training practices one question at a time".
-    // I will add a "Back to List" button and a "Next" button in the result view.
     setCurrentIndex((prev) => (prev + 1) % lesson.qa.length);
   };
 
@@ -150,12 +191,21 @@ const QuizMode: React.FC<Props> = ({ lesson }) => {
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
+  const formatDate = (ts: number) => {
+    return new Date(ts).toLocaleString('zh-CN', {
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  };
+
   // --- SELECTION SCREEN ---
   if (mode === 'select') {
     return (
       <div className="flex flex-col gap-6 items-center justify-center h-full min-h-[400px] animate-fade-in">
         <h2 className="text-2xl font-bold text-gray-800 dark:text-white">选择答题模式</h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full max-w-2xl">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 w-full max-w-4xl px-4">
           <button 
             onClick={startExam}
             className="group flex flex-col items-center p-8 rounded-[2.5rem] bg-surfaceContainer dark:bg-surfaceContainer-dark border border-outline/10 hover:border-primary/50 hover:shadow-lg transition-all duration-300"
@@ -181,6 +231,20 @@ const QuizMode: React.FC<Props> = ({ lesson }) => {
             <p className="text-sm text-outline text-center">
               选择题目，逐个击破<br/>
               纲哥详细解析每一题
+            </p>
+          </button>
+
+          <button 
+            onClick={() => setMode('history')}
+            className="group flex flex-col items-center p-8 rounded-[2.5rem] bg-surfaceContainer dark:bg-surfaceContainer-dark border border-outline/10 hover:border-primary/50 hover:shadow-lg transition-all duration-300"
+          >
+            <div className="w-16 h-16 rounded-full bg-purple-500/10 flex items-center justify-center text-purple-600 mb-4 group-hover:scale-110 transition-transform">
+              <History size={32} />
+            </div>
+            <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100 mb-2">考试记录</h3>
+            <p className="text-sm text-outline text-center">
+              查看历史考试成绩<br/>
+              回顾AI点评与错题
             </p>
           </button>
         </div>
@@ -218,19 +282,86 @@ const QuizMode: React.FC<Props> = ({ lesson }) => {
     );
   }
 
-  // --- EXAM RESULT SCREEN (DETAILED) ---
-  if (mode === 'exam-result') {
-    const totalScore = examResults.reduce((acc, curr) => acc + curr.grading.score, 0);
-    const avgScore = Math.round(totalScore / lesson.qa.length);
-    const correctCount = examResults.filter(r => r.grading.isCorrect).length;
+  // --- HISTORY LIST ---
+  if (mode === 'history') {
+    return (
+      <div className="animate-slide-up pb-24">
+         <div className="flex items-center gap-4 mb-6">
+            <button onClick={() => setMode('select')} className="text-outline hover:text-primary font-bold flex items-center gap-1">
+              <ChevronRight className="rotate-180 inline" size={20}/> 返回
+            </button>
+            <h2 className="text-xl font-bold text-gray-900 dark:text-white">考试记录</h2>
+         </div>
+         
+         {examHistory.length === 0 ? (
+           <div className="text-center py-20 text-outline">
+             <History size={48} className="mx-auto mb-4 opacity-50" />
+             <p>暂无考试记录，快去“模拟考试”挑战一下吧！</p>
+           </div>
+         ) : (
+           <div className="grid gap-4">
+             {examHistory.map((record) => (
+               <button
+                 key={record.id}
+                 onClick={() => { setSelectedRecord(record); setMode('history-detail'); }}
+                 className="w-full text-left p-6 rounded-[2rem] bg-surfaceContainer dark:bg-surfaceContainer-dark hover:bg-white dark:hover:bg-gray-800 border border-outline/10 hover:border-primary/30 transition-all duration-200"
+               >
+                 <div className="flex justify-between items-start mb-2">
+                   <h3 className="font-bold text-gray-800 dark:text-gray-100 truncate pr-4">{record.lessonTitle}</h3>
+                   <div className="flex items-center gap-1 text-xs text-outline bg-surface dark:bg-black/20 px-2 py-1 rounded-full">
+                     <Calendar size={12} /> {formatDate(record.timestamp)}
+                   </div>
+                 </div>
+                 <div className="flex items-center gap-4 mt-2">
+                    <div className="flex flex-col">
+                      <span className="text-xs text-outline">得分</span>
+                      <span className={`text-xl font-bold ${record.totalScore / record.totalQuestions >= 80 ? 'text-green-600' : 'text-primary'}`}>
+                        {Math.round(record.totalScore / record.totalQuestions)} <span className="text-xs font-normal text-gray-500">平均分</span>
+                      </span>
+                    </div>
+                    <div className="w-px h-8 bg-outline/20"></div>
+                    <div className="flex flex-col">
+                      <span className="text-xs text-outline">题目数</span>
+                      <span className="text-xl font-bold text-gray-700 dark:text-gray-300">{record.totalQuestions}</span>
+                    </div>
+                 </div>
+               </button>
+             ))}
+           </div>
+         )}
+      </div>
+    );
+  }
+
+  // --- EXAM RESULT (Detail or Fresh) ---
+  if (mode === 'exam-result' || mode === 'history-detail') {
+    const resultsToDisplay = mode === 'history-detail' && selectedRecord ? selectedRecord.results : examResults;
+    const totalCount = mode === 'history-detail' && selectedRecord ? selectedRecord.totalQuestions : lesson.qa.length;
+    const totalScore = resultsToDisplay.reduce((acc, curr) => acc + curr.grading.score, 0);
+    const avgScore = Math.round(totalScore / totalCount);
+    const correctCount = resultsToDisplay.filter(r => r.grading.isCorrect).length;
+    
+    // Title context
+    const isHistoryView = mode === 'history-detail';
 
     return (
       <div className="pb-24 animate-fade-in space-y-8">
+        <div className="flex items-center gap-4">
+          <button 
+            onClick={() => setMode(isHistoryView ? 'history' : 'select')} 
+            className="text-outline hover:text-primary font-bold flex items-center gap-1"
+          >
+            <ChevronRight className="rotate-180 inline" size={20}/> {isHistoryView ? '返回记录' : '返回主页'}
+          </button>
+        </div>
+
         <div className="text-center">
            <div className="inline-flex items-center justify-center w-20 h-20 rounded-full bg-yellow-500/10 text-yellow-600 mb-4">
             <Trophy size={40} />
           </div>
-          <h2 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">考试复盘</h2>
+          <h2 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">{isHistoryView ? '历史成绩回顾' : '考试复盘'}</h2>
+          {isHistoryView && selectedRecord && <p className="text-sm text-outline mb-2">{formatDate(selectedRecord.timestamp)}</p>}
+          
           <div className="flex justify-center gap-8 mt-4">
              <div>
                <p className="text-xs text-outline uppercase font-bold">平均分</p>
@@ -238,13 +369,13 @@ const QuizMode: React.FC<Props> = ({ lesson }) => {
              </div>
              <div>
                <p className="text-xs text-outline uppercase font-bold">正确率</p>
-               <p className="text-2xl font-bold text-green-600">{Math.round((correctCount / lesson.qa.length) * 100)}%</p>
+               <p className="text-2xl font-bold text-green-600">{Math.round((correctCount / totalCount) * 100)}%</p>
              </div>
           </div>
         </div>
 
         <div className="space-y-6">
-          {examResults.map((res, idx) => (
+          {resultsToDisplay.map((res, idx) => (
             <div key={idx} className="p-6 rounded-[2.5rem] bg-surfaceContainer dark:bg-surfaceContainer-dark border border-outline/10">
                <div className="flex items-start justify-between gap-4 mb-4">
                   <h3 className="text-lg font-bold text-gray-800 dark:text-white flex-1">
@@ -258,7 +389,7 @@ const QuizMode: React.FC<Props> = ({ lesson }) => {
                <div className="space-y-4">
                  <div className="p-4 rounded-[1.5rem] bg-white dark:bg-gray-800/50 text-sm">
                    <span className="block text-xs font-bold text-outline mb-1">你的回答</span>
-                   <p className="text-gray-700 dark:text-gray-300">{res.userAnswer}</p>
+                   <p className="text-gray-700 dark:text-gray-300 whitespace-pre-line">{res.userAnswer}</p>
                  </div>
                  
                  <div className="p-4 rounded-[1.5rem] bg-primary/5 dark:bg-primary/10 border border-primary/10">
@@ -280,15 +411,17 @@ const QuizMode: React.FC<Props> = ({ lesson }) => {
           ))}
         </div>
 
-        <div className="flex justify-center">
-          <button 
-            onClick={() => { setMode('select'); resetQuizState(); }}
-            className="px-8 py-4 rounded-full bg-primary dark:bg-primary-dark text-onPrimary font-bold flex items-center justify-center gap-2 hover:opacity-90 transition-opacity shadow-lg"
-          >
-            <RotateCcw size={20} />
-            重新开始
-          </button>
-        </div>
+        {!isHistoryView && (
+          <div className="flex justify-center">
+            <button 
+              onClick={() => { setMode('select'); resetQuizState(); }}
+              className="px-8 py-4 rounded-full bg-primary dark:bg-primary-dark text-onPrimary font-bold flex items-center justify-center gap-2 hover:opacity-90 transition-opacity shadow-lg"
+            >
+              <RotateCcw size={20} />
+              重新开始
+            </button>
+          </div>
+        )}
       </div>
     );
   }

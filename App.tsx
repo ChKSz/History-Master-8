@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { BookOpen, Edit3, MessageCircle, Moon, Sun, Menu, ChevronLeft, ChevronRight, GraduationCap, ChevronDown, LayoutGrid } from 'lucide-react';
+import { BookOpen, Edit3, MessageCircle, Moon, Sun, Menu, ChevronLeft, ChevronRight, GraduationCap, ChevronDown, LayoutGrid, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { LESSON_DATA, AUTHOR_NAME, AUTHOR_LINK } from './constants';
-import { ViewMode } from './types';
+import { ViewMode, Lesson } from './types';
 import Home from './components/Home';
 import ReviewMode from './components/ReviewMode';
 import QuizMode from './components/QuizMode';
@@ -11,8 +11,11 @@ const App: React.FC = () => {
   const [activeLessonId, setActiveLessonId] = useState<number | null>(null); // Start with null for Home view
   const [viewMode, setViewMode] = useState<ViewMode>('home');
   const [isDark, setIsDark] = useState(false);
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const [expandedUnits, setExpandedUnits] = useState<string[]>([]);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false); // Mobile sidebar
+  const [isDesktopSidebarCollapsed, setIsDesktopSidebarCollapsed] = useState(false); // Desktop sidebar
+  
+  // Changed from array to single string | null for accordion behavior
+  const [expandedUnit, setExpandedUnit] = useState<string | null>(null);
 
   // Load theme preference
   useEffect(() => {
@@ -24,8 +27,15 @@ const App: React.FC = () => {
     }
     // Set initial expanded unit if any
     const firstUnit = LESSON_DATA[0].unit;
-    if (firstUnit) setExpandedUnits([firstUnit]);
+    if (firstUnit) setExpandedUnit(firstUnit);
   }, []);
+
+  // Save active lesson to local storage whenever it changes
+  useEffect(() => {
+    if (activeLessonId) {
+      localStorage.setItem('hm8_last_active_lesson', activeLessonId.toString());
+    }
+  }, [activeLessonId]);
 
   const toggleTheme = () => {
     const newDark = !isDark;
@@ -42,23 +52,37 @@ const App: React.FC = () => {
   const handleLessonChange = (id: number) => {
     setActiveLessonId(id);
     setViewMode('review'); // Default to review when selecting a lesson
-    setIsSidebarOpen(false);
+    setIsSidebarOpen(false); // Close mobile sidebar
     
-    // Auto-expand the unit of the selected lesson and collapse others (Accordion)
+    // Auto-expand the unit of the selected lesson (closes others)
     const lesson = LESSON_DATA.find(l => l.id === id);
     if (lesson) {
-      setExpandedUnits([lesson.unit]);
+      setExpandedUnit(lesson.unit);
     }
   };
 
+  const handleStartReview = () => {
+    const lastId = localStorage.getItem('hm8_last_active_lesson');
+    if (lastId) {
+      const id = parseInt(lastId);
+      // Verify validity
+      if (LESSON_DATA.some(l => l.id === id)) {
+        handleLessonChange(id);
+        return;
+      }
+    }
+    // Default to first lesson if no history or invalid
+    handleLessonChange(LESSON_DATA[0].id);
+  };
+
   const toggleUnit = (unit: string) => {
-    setExpandedUnits(prev => 
-      prev.includes(unit) ? [] : [unit] // Close if open, Open only this one if closed
-    );
+    // If clicking the already expanded unit, collapse it (set to null).
+    // Otherwise, expand the new unit (automatically collapses the previous one).
+    setExpandedUnit(prev => (prev === unit ? null : unit));
   };
 
   const groupedLessons = useMemo(() => {
-    const groups: Record<string, typeof LESSON_DATA> = {};
+    const groups: Record<string, Lesson[]> = {};
     LESSON_DATA.forEach(lesson => {
       if (!groups[lesson.unit]) groups[lesson.unit] = [];
       groups[lesson.unit].push(lesson);
@@ -67,6 +91,10 @@ const App: React.FC = () => {
   }, []);
 
   const activeLesson = activeLessonId ? LESSON_DATA.find(l => l.id === activeLessonId) : null;
+
+  const getGroupedEntries = () => {
+    return Object.entries(groupedLessons) as [string, Lesson[]][];
+  };
 
   return (
     <div className="flex h-screen w-full bg-surface dark:bg-surface-dark transition-colors duration-300">
@@ -82,60 +110,79 @@ const App: React.FC = () => {
       {/* Sidebar Navigation */}
       <aside 
         className={`
-          fixed lg:static inset-y-0 left-0 z-50 w-80 bg-surfaceContainer dark:bg-surfaceContainer-dark 
-          border-r border-outline/10 transform transition-all duration-300 ease-in-out
+          fixed lg:static inset-y-0 left-0 z-50 bg-surfaceContainer dark:bg-surfaceContainer-dark 
+          border-r border-outline/10 transition-[width,transform] duration-300 ease-in-out flex flex-col
           ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
+          ${isDesktopSidebarCollapsed ? 'lg:w-20' : 'lg:w-80'}
+          w-80
         `}
       >
-        <div className="flex flex-col h-full">
-          <div className="p-8 pb-4 border-b border-outline/10 transition-colors duration-300">
+        <div className="flex flex-col h-full overflow-hidden">
+          {/* Sidebar Header */}
+          <div className={`
+             flex items-center border-b border-outline/10 transition-all duration-300 flex-shrink-0
+             ${isDesktopSidebarCollapsed ? 'h-32 flex-col justify-center gap-4 px-2' : 'h-20 justify-between px-6'}
+          `}>
             <div 
-              className="flex items-center gap-3 text-primary dark:text-primary-dark font-bold text-xl cursor-pointer"
+              className={`flex items-center gap-3 text-primary dark:text-primary-dark font-bold text-xl cursor-pointer transition-opacity duration-300`}
               onClick={() => { setViewMode('home'); setActiveLessonId(null); setIsSidebarOpen(false); }}
             >
-              <div className="p-3 bg-primary/10 rounded-2xl">
-                <GraduationCap size={26} />
+              <div className="p-2 bg-primary/10 rounded-xl flex-shrink-0">
+                <GraduationCap size={24} />
               </div>
-              八年级历史
+              <span className={`whitespace-nowrap ${isDesktopSidebarCollapsed ? 'hidden' : 'block'}`}>八年级历史</span>
             </div>
+            
+            {/* Desktop Collapse Toggle */}
+            <button 
+              onClick={() => setIsDesktopSidebarCollapsed(!isDesktopSidebarCollapsed)}
+              className="hidden lg:flex p-2 rounded-full hover:bg-black/5 dark:hover:bg-white/10 text-outline transition-colors"
+            >
+              {isDesktopSidebarCollapsed ? <PanelLeftOpen size={20} /> : <PanelLeftClose size={20} />}
+            </button>
           </div>
           
-          <nav className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
-             {/* Home Button in Sidebar */}
+          {/* Scrollable Nav Area - Hidden when collapsed */}
+          <nav className={`flex-1 overflow-y-auto overflow-x-hidden p-4 space-y-4 custom-scrollbar ${isDesktopSidebarCollapsed ? 'hidden' : 'block'}`}>
+             {/* Home Button */}
              <button
                 onClick={() => { setViewMode('home'); setActiveLessonId(null); setIsSidebarOpen(false); }}
-                className={`w-full text-left px-6 py-4 rounded-[2rem] text-sm font-bold transition-all duration-300 flex items-center gap-3
+                className={`w-full text-left p-3 rounded-[1.5rem] text-sm font-bold transition-all duration-300 flex items-center gap-3
                   ${viewMode === 'home'
                     ? 'bg-primary text-onPrimary shadow-lg' 
                     : 'text-gray-600 dark:text-gray-400 hover:bg-white/50 dark:hover:bg-white/5'}
                 `}
+                title="首页概览"
               >
-                <LayoutGrid size={18} />
-                首页概览
+                <LayoutGrid size={20} className="flex-shrink-0" />
+                <span>首页概览</span>
               </button>
 
-            {Object.entries(groupedLessons).map(([unit, lessons]) => (
+            {getGroupedEntries().map(([unit, lessons]) => (
               <div key={unit} className="space-y-2">
+                {/* Unit Header */}
                 <button
                   onClick={() => toggleUnit(unit)}
-                  className="w-full flex items-center justify-between px-4 py-2 text-xs font-bold text-outline uppercase tracking-wider hover:text-primary transition-colors"
+                  className="w-full flex items-center justify-between px-4 py-2 text-xs font-bold text-outline uppercase tracking-wider hover:text-primary transition-colors text-left"
                 >
-                  <span className="truncate pr-2">{unit.split(' ')[0]}</span>
-                  <ChevronDown size={14} className={`transition-transform duration-300 ${expandedUnits.includes(unit) ? 'rotate-180' : ''}`} />
+                  <span className="truncate pr-2">{unit}</span>
+                  <ChevronDown size={14} className={`flex-shrink-0 transition-transform duration-300 ${expandedUnit === unit ? 'rotate-180' : ''}`} />
                 </button>
                 
-                <div className={`space-y-1 overflow-hidden transition-all duration-500 ${expandedUnits.includes(unit) ? 'max-h-[1000px] opacity-100' : 'max-h-0 opacity-0'}`}>
+                {/* Lessons List */}
+                <div className={`space-y-1 overflow-hidden transition-all duration-500 ${expandedUnit === unit ? 'max-h-[2000px] opacity-100' : 'max-h-0 opacity-0'}`}>
                   {lessons.map((lesson) => (
                     <button
                       key={lesson.id}
                       onClick={() => handleLessonChange(lesson.id)}
-                      className={`w-full text-left px-6 py-3 rounded-[2rem] text-sm font-medium transition-all duration-300
+                      className={`w-full text-left p-3 rounded-[1.5rem] text-sm font-medium transition-all duration-300 flex items-center gap-3
                         ${activeLessonId === lesson.id 
                           ? 'bg-primaryContainer dark:bg-primaryContainer-dark text-onPrimaryContainer dark:text-blue-100 shadow-sm translate-x-1' 
                           : 'text-gray-600 dark:text-gray-400 hover:bg-white/50 dark:hover:bg-white/5'}
                       `}
+                      title={lesson.title}
                     >
-                      {lesson.title}
+                      <span className="truncate">{lesson.title}</span>
                     </button>
                   ))}
                 </div>
@@ -143,7 +190,7 @@ const App: React.FC = () => {
             ))}
           </nav>
 
-          <div className="p-6 text-center border-t border-outline/10 transition-colors duration-300">
+          <div className={`p-6 text-center border-t border-outline/10 transition-all duration-300 ${isDesktopSidebarCollapsed ? 'hidden' : 'opacity-100'}`}>
             <a 
               href={AUTHOR_LINK} 
               target="_blank" 
@@ -169,17 +216,17 @@ const App: React.FC = () => {
               >
                 <Menu size={24} className="text-gray-700 dark:text-gray-300" />
               </button>
-              <div>
-                 <h1 className="text-lg lg:text-xl font-bold text-gray-800 dark:text-gray-100 truncate max-w-[200px] lg:max-w-none transition-colors duration-300">
+              <div className="overflow-hidden">
+                 <h1 className="text-lg lg:text-xl font-bold text-gray-800 dark:text-gray-100 truncate max-w-[200px] md:max-w-md lg:max-w-2xl transition-colors duration-300">
                   {activeLesson?.title}
                 </h1>
-                <p className="text-xs text-outline hidden md:block">{activeLesson?.unit}</p>
+                <p className="text-xs text-outline hidden md:block truncate">{activeLesson?.unit}</p>
               </div>
             </div>
 
             <button 
               onClick={toggleTheme}
-              className="p-3 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors duration-300 text-gray-600 dark:text-gray-300"
+              className="p-3 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors duration-300 text-gray-600 dark:text-gray-300 flex-shrink-0"
             >
               {isDark ? <Sun size={24} /> : <Moon size={24} />}
             </button>
@@ -207,7 +254,7 @@ const App: React.FC = () => {
                       <Menu size={24} />
                     </button>
                  </div>
-                <Home onStart={() => handleLessonChange(LESSON_DATA[0].id)} />
+                <Home onStart={handleStartReview} />
               </>
             )}
             {viewMode !== 'home' && activeLesson && (

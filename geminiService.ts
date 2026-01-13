@@ -33,8 +33,10 @@ const RAW_ENV_KEYS = getEnvKey();
 const API_KEYS = RAW_ENV_KEYS.split(',').map((k: string) => k.trim()).filter((k: string) => k);
 const PROXY_BASE_URL = 'https://g-api.chksz.com'; // 你的镜像代理地址
 
-// 升级模型为 Gemini 3 Flash
-const MODEL_NAME = 'gemini-3-flash-preview';
+// 批改模型和对话模型
+// gemini-2.5-flash-lite-preview 可能会导致 404，统一使用 gemini-3-flash-preview
+const PIGAI_MODEL = 'gemini-2.5-flash-lite';
+const CHAT_MODEL = 'gemini-3-flash-preview';
 
 const SYSTEM_PROMPT = `
   角色设定:
@@ -99,6 +101,7 @@ export const gradeAnswer = async (question: string, userAnswer: string, correctA
     1. 仔细对比回答与标准答案的关键词。
     2. 打分范围 0 到 100 分。
     3. 反馈评语 (feedback): 
+       - 先严谨地指出错误与扣分点，再表扬！
        - 语气要像同学之间互相批改一样亲切。
        - 如果有遗漏，用商量的口吻指出来（“是不是漏了...？”）。
        - 展现你的耐心和善良。
@@ -111,7 +114,7 @@ export const gradeAnswer = async (question: string, userAnswer: string, correctA
   try {
     const ai = getAIClient();
     const response = await ai.models.generateContent({
-      model: MODEL_NAME,
+      model: PIGAI_MODEL,
       contents: prompt,
       config: {
         responseMimeType: "application/json",
@@ -157,7 +160,7 @@ export const askHistoryQuestion = async (context: string, history: ChatMessage[]
   try {
     const ai = getAIClient();
     const response = await ai.models.generateContent({
-      model: MODEL_NAME,
+      model: CHAT_MODEL,
       contents: prompt,
     });
     return response.text || "这题我翻翻笔记确认一下哈，稍等。";

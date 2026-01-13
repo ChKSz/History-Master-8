@@ -5,11 +5,12 @@ interface Props {
   lesson: Lesson;
 }
 
-// Helper to format text with line breaks for numbered items
+// Helper to format text with line breaks for numbered items and semicolons
 const FormatAnswer: React.FC<{ text: string }> = ({ text }) => {
-  // Regex to split by ①②③ etc, but keep the delimiter
-  // Using a lookahead to split before the delimiter
-  const parts = text.split(/(?=[①②③④⑤⑥⑦⑧⑨⑩])/g);
+  // Regex to split by:
+  // 1. Lookahead for circled numbers ①-⑩ (split before them)
+  // 2. Lookbehind for semicolons ； or ; (split after them)
+  const parts = text.split(/(?=[①②③④⑤⑥⑦⑧⑨⑩])|(?<=[；;])/g).filter(p => p && p.trim());
 
   return (
     <div className="text-lg leading-relaxed text-gray-700 dark:text-gray-300">

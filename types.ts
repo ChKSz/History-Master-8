@@ -24,3 +24,20 @@ export interface ChatMessage {
   text: string;
   timestamp: number;
 }
+
+export interface ExamQuestionResult {
+  questionId: number;
+  questionText: string;
+  userAnswer: string;
+  correctAnswer: string;
+  grading: GradingResult;
+}
+
+export interface ExamRecord {
+  id: string;
+  timestamp: number;
+  lessonTitle: string;
+  totalScore: number;
+  totalQuestions: number;
+  results: ExamQuestionResult[];
+}
