@@ -34,7 +34,6 @@ const API_KEYS = RAW_ENV_KEYS.split(',').map((k: string) => k.trim()).filter((k:
 const PROXY_BASE_URL = 'https://g-api.chksz.com'; // 你的镜像代理地址
 
 // 批改模型和对话模型
-// gemini-2.5-flash-lite-preview 可能会导致 404，统一使用 gemini-3-flash-preview
 const PIGAI_MODEL = 'gemini-2.5-flash-lite';
 const CHAT_MODEL = 'gemini-3-flash-preview';
 
