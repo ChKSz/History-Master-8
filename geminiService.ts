@@ -73,9 +73,23 @@ const getAIClient = () => {
   // 随机选择一个 Key
   const randomKey = API_KEYS[Math.floor(Math.random() * API_KEYS.length)];
   
+  // 自定义 fetch 方法，强制替换 Google API 域名为代理域名
+  // 解决国内无法直接访问 generativelanguage.googleapis.com 的问题
+  const customFetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const urlStr = input.toString();
+    // 替换官方域名为代理域名
+    const newUrl = urlStr.replace(
+      'https://generativelanguage.googleapis.com', 
+      PROXY_BASE_URL
+    );
+    return fetch(newUrl, init);
+  };
+
   return new GoogleGenAI({ 
     apiKey: randomKey,
-    baseUrl: PROXY_BASE_URL 
+    // 同时传入 baseUrl 和 customFetch 以确保兼容性
+    baseUrl: PROXY_BASE_URL,
+    fetch: customFetch
   } as any);
 };
 
@@ -125,7 +139,7 @@ export const gradeAnswer = async (question: string, userAnswer: string, correctA
     return JSON.parse(text) as GradingResult;
   } catch (error) {
     console.error("Grading error:", error);
-    return { score: 0, feedback: "哎呀，学校网有点卡，我这边没加载出来，你再发一次试试？", isCorrect: false };
+    return { score: 0, feedback: "哎呀，学校网有点卡（网络请求失败），我这边没加载出来，你再发一次试试？", isCorrect: false };
   }
 };
 
